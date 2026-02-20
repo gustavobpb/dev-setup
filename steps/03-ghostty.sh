@@ -124,19 +124,84 @@ success "Ghostty config written to ~/.config/ghostty/config"
 # Set Ghostty as default terminal
 if has ghostty; then
     GHOSTTY_BIN=$(which ghostty)
+    GHOSTTY_WRAPPER="$HOME/.local/bin/ghostty-launch"
+
+    # Create a wrapper that forces NVIDIA OpenGL.
+    # Without this, GTK4/EGL defaults to Mesa/ZINK which fails on NVIDIA GPUs
+    # (libEGL warning: egl: failed to create dri2 screen), preventing any window
+    # from rendering. The wrapper sets the GLVND vendor selection env vars.
+    mkdir -p "$HOME/.local/bin"
+    cat > "$GHOSTTY_WRAPPER" << 'WRAPEOF'
+#!/usr/bin/env bash
+# Force NVIDIA OpenGL instead of Mesa/ZINK
+if lsmod 2>/dev/null | grep -q "^nvidia"; then
+    export __GLX_VENDOR_LIBRARY_NAME=nvidia
+    export __EGL_VENDOR_LIBRARY_FILENAMES=/usr/share/glvnd/egl_vendor.d/10_nvidia.json
+fi
+exec /snap/bin/ghostty "$@"
+WRAPEOF
+    chmod +x "$GHOSTTY_WRAPPER"
+    success "Ghostty NVIDIA wrapper created at $GHOSTTY_WRAPPER"
 
     # Register with update-alternatives (used by most apps and file managers)
     if command -v update-alternatives &>/dev/null; then
         sudo update-alternatives --install \
-            /usr/bin/x-terminal-emulator x-terminal-emulator "$GHOSTTY_BIN" 50 2>/dev/null || true
-        sudo update-alternatives --set x-terminal-emulator "$GHOSTTY_BIN" 2>/dev/null || true
+            /usr/bin/x-terminal-emulator x-terminal-emulator "$GHOSTTY_WRAPPER" 50 2>/dev/null || true
+        sudo update-alternatives --set x-terminal-emulator "$GHOSTTY_WRAPPER" 2>/dev/null || true
         success "Ghostty set as x-terminal-emulator default"
     fi
 
-    # Set as GNOME default terminal (right-click desktop, keyboard shortcut)
+    # Set as GNOME default terminal
     if command -v gsettings &>/dev/null; then
-        gsettings set org.gnome.desktop.default-applications.terminal exec "$GHOSTTY_BIN" 2>/dev/null || true
+        gsettings set org.gnome.desktop.default-applications.terminal exec "$GHOSTTY_WRAPPER" 2>/dev/null || true
         gsettings set org.gnome.desktop.default-applications.terminal exec-arg '' 2>/dev/null || true
         success "Ghostty set as GNOME default terminal"
+    fi
+
+    # Fix broken snap desktop entry — the snap's Exec points to an internal build path
+    # that doesn't exist on the host. Use the NVIDIA wrapper instead.
+    mkdir -p "$HOME/.local/share/applications"
+    cat > "$HOME/.local/share/applications/com.mitchellh.ghostty.desktop" << DESKTOPEOF
+[Desktop Entry]
+Version=1.0
+Name=Ghostty
+Type=Application
+Comment=A terminal emulator
+TryExec=${GHOSTTY_WRAPPER}
+Exec=${GHOSTTY_WRAPPER} --gtk-single-instance=true
+Icon=com.mitchellh.ghostty
+Categories=System;TerminalEmulator;
+Keywords=terminal;tty;pty;
+StartupNotify=true
+StartupWMClass=com.mitchellh.ghostty
+Terminal=false
+Actions=new-window;
+X-GNOME-UsesNotifications=true
+X-TerminalArgExec=-e
+X-TerminalArgTitle=--title=
+X-TerminalArgAppId=--class=
+X-TerminalArgDir=--working-directory=
+X-TerminalArgHold=--wait-after-command
+DBusActivatable=false
+
+[Desktop Action new-window]
+Name=New Window
+Exec=${GHOSTTY_WRAPPER} --gtk-single-instance=true
+DESKTOPEOF
+    update-desktop-database "$HOME/.local/share/applications/" 2>/dev/null || true
+    success "Ghostty desktop entry fixed"
+
+    # Set Ctrl+Alt+T as a custom keybinding to the NVIDIA wrapper.
+    if command -v gsettings &>/dev/null; then
+        gsettings set org.gnome.settings-daemon.plugins.media-keys terminal [] 2>/dev/null || true
+        gsettings set org.gnome.settings-daemon.plugins.media-keys custom-keybindings \
+            "['/org/gnome/settings-daemon/plugins/media-keys/custom-keybindings/custom0/']" 2>/dev/null || true
+        gsettings set org.gnome.settings-daemon.plugins.media-keys.custom-keybinding:/org/gnome/settings-daemon/plugins/media-keys/custom-keybindings/custom0/ \
+            name 'Ghostty Terminal' 2>/dev/null || true
+        gsettings set org.gnome.settings-daemon.plugins.media-keys.custom-keybinding:/org/gnome/settings-daemon/plugins/media-keys/custom-keybindings/custom0/ \
+            command "$GHOSTTY_WRAPPER" 2>/dev/null || true
+        gsettings set org.gnome.settings-daemon.plugins.media-keys.custom-keybinding:/org/gnome/settings-daemon/plugins/media-keys/custom-keybindings/custom0/ \
+            binding '<Primary><Alt>t' 2>/dev/null || true
+        success "Ctrl+Alt+T → Ghostty keybinding configured"
     fi
 fi

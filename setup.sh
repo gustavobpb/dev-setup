@@ -160,8 +160,8 @@ if [[ ${#INSTALL_PROFILES[@]} -eq 0 ]] && [[ "$INSTALL_ALL_PROFILES" == "false" 
     echo ""
     echo "  Available profiles:"
     for entry in "${PROFILE_SCRIPTS[@]}"; do
-        local pname="${entry%%:*}"
-        local pdesc="${entry##*:}"
+        pname="${entry%%:*}"
+        pdesc="${entry##*:}"
         echo "    [$pname]  $pdesc"
     done
     echo ""
